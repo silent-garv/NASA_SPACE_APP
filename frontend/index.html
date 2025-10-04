@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NASA Space Apps - Weather Comfort</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>NASA Space Apps - Weather Comfort Demo</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root{color-scheme:light}
+      body{font-family:system-ui,Segoe UI,Arial;margin:18px;max-width:760px}
+      label{display:block;margin-top:10px}
+      input{padding:6px 8px;margin-left:6px}
+      button{margin-top:10px;padding:8px 12px}
+      .result{margin-top:16px;padding:14px;border:1px solid #ddd;border-radius:8px;background:#fafafa}
+      .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#e8eef9;color:#1a4595;margin-right:6px}
+      .muted{color:#666;font-size:13px}
+    </style>
+  </head>
+  <body>
+    <h1>Will it be comfortable?</h1>
+    <p class="muted">Uses NASA POWER (historical) and Open-Meteo (forecast) — Powered by NASA</p>
+
+    <label>Latitude <input id="lat" value="28.6139"/></label>
+    <label>Longitude <input id="lon" value="77.2090"/></label>
+    <label>Date <input id="date" value="2025-10-06" placeholder="YYYY-MM-DD"/></label>
+    <div>
+      <button id="go">Check Comfort</button>
+      <button id="use-my-location">Use my location</button>
+    </div>
+
+    <div id="out" class="result" style="display:none"></div>
+
+    <script>
+      // Classification logic (same as backend)
+      function classifyWeather({tempC, humidity, precipMM, windKmh, heatIndexC}){
+        const categories = [];
+        if (tempC != null && tempC >= 35) categories.push('very_hot');
+        if (tempC != null && tempC <= 5) categories.push('very_cold');
+        if ((precipMM || 0) >= 5) categories.push('very_wet');
+        if ((windKmh || 0) >= 20) categories.push('very_windy');
+        if ((heatIndexC || tempC) != null && ((heatIndexC || tempC) >= 32 || (humidity || 0) >= 80)) categories.push('very_uncomfortable');
+        if (categories.length === 0) categories.push('comfortable');
+        return categories;
+      }
+
+      async function fetchPower(lat, lon, date){
+        // date should be YYYYMMDD
+        const d = date.replace(/-/g,'');
+        const params = new URLSearchParams({
+          start: d, end: d, latitude: String(lat), longitude: String(lon), community:'AG', parameters:'T2M,PRECTOT,WS2M,RH2M,HI', format:'JSON'
+        });
+        const url = `https://power.larc.nasa.gov/api/temporal/daily/point?${params.toString()}`;
+        try{
+          const res = await fetch(url);
+          if (!res.ok) return null;
+          return await res.json();
+        }catch(e){
+          return null;
+        }
+      }
+
+      async function fetchOpenMeteo(lat, lon, date){
+        const d = date;
+        const params = new URLSearchParams({
+          latitude: String(lat), longitude: String(lon), daily:'temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,relativehumidity_2m_max', timezone:'UTC', start_date: d, end_date: d
+        });
+        const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        return await res.json();
+      }
+
+      function showResult(source, metrics, categories){
+        const out = document.getElementById('out');
+        out.style.display = 'block';
+        out.innerHTML = '';
+        out.innerHTML += `<div><strong>Categories:</strong> ${categories.map(c=>`<span class=\"badge\">${c}</span>`).join('')}</div>`;
+        out.innerHTML += `<div style="margin-top:8px"><strong>Temp (°C):</strong> ${metrics.tempC ?? 'N/A'}</div>`;
+        out.innerHTML += `<div><strong>Humidity (%):</strong> ${metrics.humidity ?? 'N/A'}</div>`;
+        out.innerHTML += `<div><strong>Precip (mm):</strong> ${metrics.precipMM ?? 'N/A'}</div>`;
+        out.innerHTML += `<div><strong>Wind (km/h):</strong> ${metrics.windKmh ?? 'N/A'}</div>`;
+        out.innerHTML += `<div style="margin-top:10px;color:#666;font-size:13px">Source: ${source}</div>`;
+      }
+
+      document.getElementById('go').addEventListener('click', async ()=>{
+        const lat = document.getElementById('lat').value.trim();
+        const lon = document.getElementById('lon').value.trim();
+        const date = document.getElementById('date').value.trim();
+        const out = document.getElementById('out');
+        out.style.display='block'; out.innerText='Loading…';
+
+        try{
+          // Try NASA POWER first (historical)
+          const power = await fetchPower(lat, lon, date);
+          if (power && power.properties && power.properties.parameter){
+            const p = power.properties.parameter;
+            const key = date.replace(/-/g,'');
+            const tempC = p.T2M ? Number(p.T2M[key]) : null;
+            const precipMM = p.PRECTOT ? Number(p.PRECTOT[key]) : null;
+            const windMs = p.WS2M ? Number(p.WS2M[key]) : null;
+            const windKmh = windMs != null ? windMs * 3.6 : null;
+            const humidity = p.RH2M ? Number(p.RH2M[key]) : null;
+            const heatIndexC = p.HI ? Number(p.HI[key]) : null;
+            const metrics = {tempC, humidity, precipMM, windKmh, heatIndexC};
+            const categories = classifyWeather(metrics);
+            showResult('NASA POWER', metrics, categories);
+            return;
+          }
+
+          // Fallback to Open-Meteo (forecast)
+          const om = await fetchOpenMeteo(lat, lon, date);
+          if (om && om.daily){
+            const d = om.daily;
+            const tempMax = d.temperature_2m_max ? d.temperature_2m_max[0] : null;
+            const tempMin = d.temperature_2m_min ? d.temperature_2m_min[0] : null;
+            const precip = d.precipitation_sum ? d.precipitation_sum[0] : null;
+            const wind = d.windspeed_10m_max ? d.windspeed_10m_max[0] : null;
+            const rh = d.relativehumidity_2m_max ? d.relativehumidity_2m_max[0] : null;
+            const temp = tempMax != null ? tempMax : tempMin;
+            const metrics = {tempC: temp, humidity: rh, precipMM: precip, windKmh: wind, heatIndexC: null};
+            const categories = classifyWeather(metrics);
+            showResult('Open-Meteo (fallback)', metrics, categories);
+            return;
+          }
+
+          out.innerText = 'No data available for this date/location.';
+        }catch(e){
+          out.innerText = 'Error: '+e;
+        }
+      });
+
+      document.getElementById('use-my-location').addEventListener('click', ()=>{
+        if (!navigator.geolocation){ alert('Geolocation not supported'); return; }
+        navigator.geolocation.getCurrentPosition(pos=>{
+          document.getElementById('lat').value = pos.coords.latitude.toFixed(6);
+          document.getElementById('lon').value = pos.coords.longitude.toFixed(6);
+        }, err=>{ alert('Geolocation error: '+err.message) });
+      });
+    </script>
+  </body>
+</html>
