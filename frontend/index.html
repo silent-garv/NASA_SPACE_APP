@@ -4,8 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NASA Space Apps - Weather Comfort</title>
+    <meta name="theme-color" content="#0f62fe" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <!-- Simple inline SVG favicon to avoid 404 requests for /favicon.ico -->
     <link rel="icon" href='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text x=%220%22 y=%2212%22 font-size=%2212%22>☀️</text></svg>' />
+    <!-- PWA icons (vite-plugin-pwa will also generate a manifest and inject registration) -->
+    <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+  
+  <!-- Leaflet (map) CSS and JS from CDN (no integrity to avoid blocking during dev) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      <!-- Lottie (lottie-web) for animations -->
+      <script src="https://unpkg.com/lottie-web@5.9.6/build/player/lottie.min.js"></script>
   </head>
   <body>
     <div id="root"></div>

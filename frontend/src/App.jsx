@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useRef} from 'react'
+import ReactDOM from 'react-dom'
 import { Line } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -38,6 +39,7 @@ async function fetchOpenMeteo(lat, lon, date){
 }
 
 export default function App(){
+  const searchRef = useRef(null);
   const [lat,setLat] = useState('28.6139');
   const [lon,setLon] = useState('77.2090');
   const [date,setDate] = useState(new Date().toISOString().slice(0,10));
@@ -48,6 +50,75 @@ export default function App(){
   const [places,setPlaces] = useState([]);
   const [selectedPlace,setSelectedPlace] = useState(null);
   const debounceRef = useRef(null);
+  // live-location follow state/refs
+  const [following, setFollowing] = useState(false);
+  const watchIdRef = useRef(null);
+  // Quick-access city suggestions for the sidebar
+  const otherCities = [
+    { country: 'India', name: 'New Delhi', lat: '28.6139', lon: '77.2090' },
+    { country: 'Japan', name: 'Tokyo', lat: '35.6762', lon: '139.6503' },
+    { country: 'Brazil', name: 'Brasília', lat: '-15.7939', lon: '-47.8828' },
+    { country: 'Germany', name: 'Berlin', lat: '52.5200', lon: '13.4050' },
+    { country: 'UAE', name: 'Dubai', lat: '25.276987', lon: '55.296249' },
+  ];
+
+  // Units: metric (°C, km/h) or imperial (°F, mph)
+  const [unit, setUnit] = useState('metric');
+  const toF = (c)=> c==null? null : (c*9/5+32);
+  const toMph = (kmh)=> kmh==null? null : (kmh/1.609344);
+
+  // Favorites stored in localStorage
+  const [favs, setFavs] = useState([]);
+  useEffect(()=>{
+    try{
+      const s = localStorage.getItem('comfortcast:favs');
+      if (s){ setFavs(JSON.parse(s)); }
+      // Load from URL params if present
+      const sp = new URLSearchParams(location.search);
+      const qLat = sp.get('lat'); const qLon = sp.get('lon'); const qDate = sp.get('date'); const qName = sp.get('q'); const qUnit = sp.get('unit');
+      if (qLat && qLon){ setLat(qLat); setLon(qLon); }
+      if (qDate){
+        // support both YYYYMMDD and YYYY-MM-DD
+        const d = qDate.length===8? `${qDate.slice(0,4)}-${qDate.slice(4,6)}-${qDate.slice(6,8)}` : qDate;
+        setDate(d);
+      }
+      if (qName){ setQuery(qName); setSelectedPlace({display_name:qName, lat:qLat, lon:qLon}); }
+      if (qUnit && (qUnit==='metric' || qUnit==='imperial')) setUnit(qUnit);
+    }catch(e){ /* ignore */ }
+  }, []);
+
+  // On first load, try to center on current device location (no watch)
+  useEffect(()=>{
+    if (navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(
+        p=>{ setLat(p.coords.latitude.toFixed(6)); setLon(p.coords.longitude.toFixed(6)); },
+        ()=>{/* ignore denial */},
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    }
+  }, []);
+
+  // Keep URL in sync with selections
+  useEffect(()=>{
+    const sp = new URLSearchParams(location.search);
+    sp.set('lat', String(lat)); sp.set('lon', String(lon)); sp.set('date', String(date)); sp.set('unit', unit);
+    if (query) sp.set('q', query); else sp.delete('q');
+    const url = `${location.pathname}?${sp.toString()}`;
+    history.replaceState(null, '', url);
+  }, [lat, lon, date, unit, query]);
+
+  function addFavorite(){
+    const name = selectedPlace?.display_name || query || `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}`;
+    const item = { id: `${lat},${lon}`, name, lat, lon };
+    const next = [item, ...favs.filter(f=>f.id!==item.id)].slice(0,12);
+    setFavs(next);
+    try{ localStorage.setItem('comfortcast:favs', JSON.stringify(next)); }catch(e){}
+  }
+  function removeFavorite(id){
+    const next = favs.filter(f=>f.id!==id);
+    setFavs(next);
+    try{ localStorage.setItem('comfortcast:favs', JSON.stringify(next)); }catch(e){}
+  }
 
   useEffect(()=>{
     if (!query || query.length < 3){ setPlaces([]); return; }
@@ -164,6 +235,10 @@ export default function App(){
   // chart state — a small 7-day chart fetched from Open-Meteo (client-side)
   const [chartData, setChartData] = useState(null);
   const [activeTab, setActiveTab] = useState('forecast');
+  // Leaflet map refs
+  const mapRef = useRef(null);
+  const markerRef = useRef(null);
+  const lottieRef = useRef(null);
 
   // unique feature: compute a Comfort Score (0-100) from metrics
   function computeComfortScore(metrics){
@@ -237,18 +312,137 @@ export default function App(){
 
   useEffect(()=>{ fetch7Day(lat, lon); }, [lat, lon]);
 
+  // initialize map once when map-root is present
+  useEffect(()=>{
+    if (mapRef.current) return;
+    const L = window.L;
+    if (!L) return;
+    const root = document.getElementById('map-root');
+    if (!root) return;
+    try{
+      const map = L.map(root, { zoomControl: true, attributionControl: true }).setView([Number(lat), Number(lon)], 6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+      mapRef.current = map;
+      // create marker with an empty div container
+      function createMarker(){
+        const div = document.createElement('div');
+        div.className = 'lottie-marker';
+        div.style.width = '70px'; div.style.height = '70px';
+        const icon = L.divIcon({ className: '', html: div.outerHTML, iconSize: [70,70] });
+        const marker = L.marker([Number(lat), Number(lon)], { icon, draggable: true }).addTo(map);
+        markerRef.current = marker;
+        // when marker dragged, update app coords
+        marker.on('dragend', (e)=>{
+          const ll = e.target.getLatLng();
+          setLat(ll.lat.toFixed(6));
+          setLon(ll.lng.toFixed(6));
+          // user interacted manually; stop following
+          setFollowing(false);
+        });
+      }
+      createMarker();
+      // clicking on map sets coords
+      map.on('click', (e)=>{
+        setLat(e.latlng.lat.toFixed(6));
+        setLon(e.latlng.lng.toFixed(6));
+        // user interacted manually; stop following
+        setFollowing(false);
+      });
+      // ensure map resizes properly when container layout changes
+      setTimeout(()=>{ map.invalidateSize(); }, 300);
+      // attach lottie when available
+      const tryAttach = ()=>{
+        const node = root.querySelector('.lottie-marker');
+        if (!node) return;
+        if (window.lottie && !lottieRef.current){
+          lottieRef.current = window.lottie.loadAnimation({container: node, renderer:'svg', loop:true, autoplay:true, path:''});
+        }
+      };
+      setTimeout(tryAttach, 300);
+      window.requestAnimationFrame(tryAttach);
+    }catch(e){ console.warn('Leaflet init failed', e); }
+  }, [lat, lon]);
+
+  // update marker position and lottie animation when lat/lon/result change
+  useEffect(()=>{
+    const map = mapRef.current; const marker = markerRef.current;
+    if (!map || !marker) return;
+    try{
+      marker.setLatLng([Number(lat), Number(lon)]);
+      map.panTo([Number(lat), Number(lon)]);
+      // update lottie animation depending on categories
+      if (lottieRef.current){
+        // choose a small local fallback or remote lottie JSON depending on condition
+        const condition = (result && result.categories && result.categories[0]) || 'comfortable';
+        const urlMap = {
+          very_hot: 'https://assets7.lottiefiles.com/packages/lf20_j1adxtyb.json',
+          very_cold: 'https://assets7.lottiefiles.com/packages/lf20_sxq4r1kz.json',
+          very_wet: 'https://assets7.lottiefiles.com/packages/lf20_5ngs2ksb.json',
+          very_windy: 'https://assets7.lottiefiles.com/packages/lf20_2fdy7kuh.json',
+          very_uncomfortable: 'https://assets7.lottiefiles.com/packages/lf20_4kx2q32n.json',
+          comfortable: 'https://assets7.lottiefiles.com/packages/lf20_u4yrau.json',
+        };
+        const path = urlMap[condition] || urlMap.comfortable;
+        try{ lottieRef.current.destroy(); }catch(e){}
+        lottieRef.current = window.lottie.loadAnimation({container: document.querySelector('.lottie-marker'), renderer:'svg', loop:true, autoplay:true, path});
+      }
+    }catch(e){ console.warn('Leaflet update failed', e); }
+  }, [lat, lon, result]);
+
+  // Start/stop geolocation watch for live following
+  useEffect(()=>{
+    if (!following){
+      if (watchIdRef.current && navigator.geolocation){
+        try{ navigator.geolocation.clearWatch(watchIdRef.current); }catch(_){}
+      }
+      watchIdRef.current = null;
+      return;
+    }
+    if (!navigator.geolocation){
+      setFollowing(false);
+      return;
+    }
+    const wid = navigator.geolocation.watchPosition(
+      p=>{
+        const la = p.coords.latitude.toFixed(6);
+        const lo = p.coords.longitude.toFixed(6);
+        setLat(la); setLon(lo);
+      },
+      ()=>{ /* on error, stop following */ setFollowing(false); },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+    );
+    watchIdRef.current = wid;
+    return ()=>{
+      if (watchIdRef.current && navigator.geolocation){
+        try{ navigator.geolocation.clearWatch(watchIdRef.current); }catch(_){}
+      }
+      watchIdRef.current = null;
+    };
+  }, [following]);
+
   return (
     <div className='container'>
-      <div className='navbar' role='navigation' aria-label='Main'>
+      <div className='navbar glass' role='navigation' aria-label='Main'>
         <div className='nav-title'>ComfortCast</div>
+        <div className='searchbar'>
+          <input ref={searchRef} placeholder='Search City or Place' value={query} onChange={e=>{ setQuery(e.target.value); setSelectedPlace(null);} } />
+          {places && places.length>0 && searchRef.current && (
+            <SuggestionDropdown anchorRef={searchRef} places={places.slice(0,5)} onPick={pickPlace} />
+          )}
+        </div>
         <div className='nav-links' role='tablist' aria-label='Sections'>
+          {/* Unit toggle */}
+          <div className='unit-toggle' role='group' aria-label='Units'>
+            <button className={unit==='metric'?'active':''} onClick={()=>setUnit('metric')}>°C</button>
+            <button className={unit==='imperial'?'active':''} onClick={()=>setUnit('imperial')}>°F</button>
+          </div>
           <button role='tab' aria-pressed={activeTab==='forecast'} onClick={()=>setActiveTab('forecast')} className={activeTab==='forecast'?'active':''}>Forecast</button>
           <button role='tab' aria-pressed={activeTab==='info'} onClick={()=>setActiveTab('info')} className={activeTab==='info'?'active':''}>Info</button>
         </div>
       </div>
 
       {activeTab === 'info' ? (
-        <div className='card'>
+        <div className='card glass'>
           <h2>About this demo</h2>
           <p className='muted'>This prototype uses NASA POWER and Open-Meteo to compute a simple comfort classification and a numeric Comfort Score. If the requested date lacks NASA POWER daily data (or is in the future), we predict values from the previous 7 days of NASA POWER data.</p>
           <ul>
@@ -266,119 +460,203 @@ export default function App(){
           </ol>
         </div>
       ) : (
-        <div className='card'>
-          <h1 className='title'>Will it be comfortable?</h1>
-          <p className='muted'>Uses NASA POWER (historical) and Open-Meteo (forecast). Shows simple comfort categories.</p>
-          <div style={{marginTop:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-            <div className='muted'>Location: <strong>{selectedPlace ? selectedPlace.display_name : (lat+", "+lon)}</strong></div>
-            <div className='muted'>Date: <strong>{date}</strong></div>
-          </div>
-
-          <div className='controls' style={{marginTop:12}}>
-            <div style={{flex:1}}>
-              <input placeholder='Search place (e.g., New Delhi)' value={query} onChange={e=>{ setQuery(e.target.value); setSelectedPlace(null); }} style={{width:'100%'}} />
-              {places && places.length>0 && (
-                <div className='place-list'>
-                  {places.map(p=> (
-                    <div key={p.place_id} className='place-item' onClick={()=>pickPlace(p)}>
-                      <div style={{fontSize:14}}>{p.display_name}</div>
-                      <div style={{fontSize:12,color:'#666'}}>lat: {p.lat}, lon: {p.lon}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div style={{minWidth:320}}>
-              <div className='row'>
-                <label style={{flex:1}}>Latitude <input value={lat} onChange={e=>setLat(e.target.value)} /></label>
-                <label style={{flex:1}}>Longitude <input value={lon} onChange={e=>setLon(e.target.value)} /></label>
+        <div className='dashboard'>
+          {/* Left: Main Weather Card */}
+          <div>
+            <div className='card glass weather-card'>
+              <h1 className='title'>Will it be comfortable?</h1>
+              <p className='muted'>Uses NASA POWER (historical) and Open-Meteo (forecast). Shows simple comfort categories.</p>
+              <div style={{marginTop:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div className='muted'>Location: <strong>{selectedPlace ? selectedPlace.display_name : (lat+", "+lon)}</strong></div>
+                <div className='muted'>Date: <strong>{date}</strong></div>
               </div>
-              <div className='row' style={{marginTop:8,justifyContent:'space-between',alignItems:'center'}}>
-                <label>Date <input type='date' value={date} onChange={e=>setDate(e.target.value)} /></label>
-                  <div>
-                  <button onClick={check} disabled={loading} className={!loading? 'btn-primary':''} style={{marginRight:8}} aria-live='polite'>
+
+              {/* Compact toolbar: latitude / longitude / date / actions */}
+              <div className='toolbar' style={{marginTop:12}} role='toolbar' aria-label='Location controls'>
+                <label className='toolbar-item'>
+                  <span className='sr-only'>Latitude</span>
+                  <input aria-label='Latitude' value={lat} onChange={e=>setLat(e.target.value)} placeholder='Lat' />
+                </label>
+                <label className='toolbar-item'>
+                  <span className='sr-only'>Longitude</span>
+                  <input aria-label='Longitude' value={lon} onChange={e=>setLon(e.target.value)} placeholder='Lon' />
+                </label>
+                <label className='toolbar-item'>
+                  <span className='sr-only'>Date</span>
+                  <input aria-label='Date' type='date' value={date} onChange={e=>setDate(e.target.value)} />
+                </label>
+                <div style={{marginLeft:'auto', display:'flex', gap:8, alignItems:'center'}}>
+                  <button onClick={check} disabled={loading} className={!loading? 'btn-primary':''} aria-live='polite'>
                     {loading ? <span className='spinner' aria-hidden='true'></span> : 'Check Comfort'}
                   </button>
                   <button onClick={()=>{ if (navigator.geolocation) navigator.geolocation.getCurrentPosition(p=>{ setLat(p.coords.latitude.toFixed(6)); setLon(p.coords.longitude.toFixed(6)); }) }} className='btn-outline'>Use my location</button>
+                  <button onClick={()=> setFollowing(f=>!f)} className={following? 'btn-primary' : 'btn-outline'} aria-pressed={following} title='Follow live device location'>
+                    {following ? 'Following…' : 'Follow me'}
+                  </button>
+                  <button onClick={addFavorite} className='btn-outline'>Save to Favorites</button>
                 </div>
               </div>
+
+              {result && (
+                <div style={{marginTop:18}}>
+                  <div className='card glass' style={{padding:14}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                      <div>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <div className='badge' aria-hidden='true'>{categoryMap[(result.noData ? 'no_data' : result.categories[0])].emoji}</div>
+                          <div style={{fontSize:18,marginBottom:6}}><strong>{categoryMap[(result.noData ? 'no_data' : result.categories[0])].message}</strong></div>
+                        </div>
+                        <div className='muted'>Source: {result.source}</div>
+                      </div>
+                      <div style={{textAlign:'right'}}>
+                        <div style={{fontSize:14,color:'#6b7280'}}>Comfort Score</div>
+                        <div style={{fontSize:20,fontWeight:700}}>{computeComfortScore(result.metrics) ?? 'N/A'}</div>
+                        <div className='muted' style={{fontSize:12}}>{comfortRecommendation(computeComfortScore(result.metrics))}</div>
+                      </div>
+                    </div>
+
+                    <div style={{marginTop:12}}>
+                      <div id='map-root' style={{height:220,borderRadius:12,overflow:'hidden'}}></div>
+                    </div>
+
+                    {result.noData ? (
+                      <div style={{padding:12,background:'rgba(255,246,230,0.8)',borderRadius:8}}>
+                        <strong>No data available for this date/location.</strong>
+                        <div className='muted' style={{marginTop:6}}>The backend couldn't find daily values from NASA POWER or Open-Meteo for this query. Try another date (historical) or location.</div>
+                        {result.rawPower && (
+                          <details style={{marginTop:8}}>
+                            <summary>Show raw NASA POWER response</summary>
+                            <pre style={{maxHeight:200,overflow:'auto'}}>{JSON.stringify(result.rawPower,null,2)}</pre>
+                          </details>
+                        )}
+                        {result.rawOpenMeteo && (
+                          <details style={{marginTop:8}}>
+                            <summary>Show raw Open-Meteo response</summary>
+                            <pre style={{maxHeight:200,overflow:'auto'}}>{JSON.stringify(result.rawOpenMeteo,null,2)}</pre>
+                          </details>
+                        )}
+                      </div>
+                    ) : (
+                      <div className='metrics'>
+                          <div className='metric'><div className='muted'>Temp ({unit==='metric'?'°C':'°F'})</div><div style={{fontSize:18}}>{(()=>{ const t = result.metrics.tempC; const v = unit==='metric'? t : toF(t); return t==null? 'N/A' : Number(v).toFixed(1); })()}</div></div>
+                          <div className='metric'><div className='muted'>Humidity (%)</div><div style={{fontSize:18}}>{(result.metrics.humidity==null)?'N/A':Number(result.metrics.humidity).toFixed(0)}</div></div>
+                          <div className='metric'><div className='muted'>Precip (mm)</div><div style={{fontSize:18}}>{(result.metrics.precipMM==null)?'N/A':Number(result.metrics.precipMM).toFixed(1)}</div></div>
+                          <div className='metric'><div className='muted'>Wind ({unit==='metric'?'km/h':'mph'})</div><div style={{fontSize:18}}>{(()=>{ const w = result.metrics.windKmh; const v = unit==='metric'? w : toMph(w); return w==null? 'N/A' : Number(v).toFixed(1); })()}</div></div>
+                      </div>
+                    )}
+                    {result && result.source === 'nasa-power-predicted' && (
+                      <div style={{marginTop:10,padding:10,background:'rgba(238,246,255,0.85)',borderRadius:8}}>
+                        <strong>Predicted from NASA POWER history.</strong>
+                        <div className='muted' style={{marginTop:4}}>Values are averages computed from up to the previous 7 days of NASA POWER daily data.</div>
+                        {result.rawHistory && (
+                          <details style={{marginTop:6}}>
+                            <summary>Show raw NASA POWER history (7-day window)</summary>
+                            <pre style={{maxHeight:220,overflow:'auto'}}>{JSON.stringify(result.rawHistory,null,2)}</pre>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {chartData && (
+                <div className='chart-card'>
+                  <div className='chart-legend'><div><strong>7-day temperature</strong></div><div className='muted'>Avg daily</div></div>
+                  <Line data={chartData} options={{responsive:true, plugins:{legend:{display:false}}}} />
+                </div>
+              )}
+
+              {error && (<div style={{marginTop:12,color:'crimson'}}><strong>Error: </strong>{error}</div>)}
             </div>
           </div>
 
-          {result && (
-            <div style={{marginTop:18}}>
-              <div className='card' style={{padding:14}}>
-                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                  <div>
-                    <div style={{display:'flex',alignItems:'center',gap:10}}>
-                      <div className='badge' aria-hidden='true'>{categoryMap[(result.noData ? 'no_data' : result.categories[0])].emoji}</div>
-                      <div style={{fontSize:18,marginBottom:6}}><strong>{categoryMap[(result.noData ? 'no_data' : result.categories[0])].message}</strong></div>
-                    </div>
-                    <div className='muted'>Source: {result.source}</div>
-                  </div>
-                  <div style={{textAlign:'right'}}>
-                    {/* Comfort Score */}
-                    <div style={{fontSize:14,color:'#6b7280'}}>Comfort Score</div>
-                    <div style={{fontSize:20,fontWeight:700}}>{computeComfortScore(result.metrics) ?? 'N/A'}</div>
-                    <div className='muted' style={{fontSize:12}}>{comfortRecommendation(computeComfortScore(result.metrics))}</div>
+          {/* Right: Sidebar with other cities */}
+          <div>
+            <div className='card glass sidebar'>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <div><strong>Other Cities</strong></div>
+                <div className='muted' style={{fontSize:12}}>Quick select</div>
+              </div>
+              {/* Favorites */}
+              {favs.length>0 && (
+                <div style={{marginBottom:10}}>
+                  <div style={{marginBottom:6}}><strong>Favorites</strong></div>
+                  <div className='city-list'>
+                    {favs.map(f=> (
+                      <div key={f.id} className='city-item' onClick={()=>{ setLat(f.lat); setLon(f.lon); setQuery(f.name); setSelectedPlace({display_name:f.name, lat:f.lat, lon:f.lon}); }}>
+                        <div>
+                          <div style={{fontWeight:600}}>{f.name}</div>
+                          <div className='muted' style={{fontSize:12}}>{Number(f.lat).toFixed(2)}, {Number(f.lon).toFixed(2)}</div>
+                        </div>
+                        <button className='btn-outline' onClick={(e)=>{ e.stopPropagation(); removeFavorite(f.id); }}>Remove</button>
+                      </div>
+                    ))}
                   </div>
                 </div>
-
-                {result.noData ? (
-                  <div style={{padding:12,background:'#fff6e6',borderRadius:8}}>
-                    <strong>No data available for this date/location.</strong>
-                    <div className='muted' style={{marginTop:6}}>The backend couldn't find daily values from NASA POWER or Open-Meteo for this query. Try another date (historical) or location.</div>
-                    {result.rawPower && (
-                      <details style={{marginTop:8}}>
-                        <summary>Show raw NASA POWER response</summary>
-                        <pre style={{maxHeight:200,overflow:'auto'}}>{JSON.stringify(result.rawPower,null,2)}</pre>
-                      </details>
-                    )}
-                    {result.rawOpenMeteo && (
-                      <details style={{marginTop:8}}>
-                        <summary>Show raw Open-Meteo response</summary>
-                        <pre style={{maxHeight:200,overflow:'auto'}}>{JSON.stringify(result.rawOpenMeteo,null,2)}</pre>
-                      </details>
-                    )}
+              )}
+              <div className='city-list'>
+                {otherCities.map(c => (
+                  <div key={c.name} className='city-item' onClick={()=>{ setLat(c.lat); setLon(c.lon); setQuery(`${c.name}, ${c.country}`); setSelectedPlace({display_name:`${c.name}, ${c.country}`, lat:c.lat, lon:c.lon}); }}>
+                    <div>
+                      <div style={{fontWeight:600}}>{c.name}</div>
+                      <div className='muted' style={{fontSize:12}}>{c.country}</div>
+                    </div>
+                    <div style={{fontSize:18}}>🌤️</div>
                   </div>
-                ) : (
-                  <div className='metrics'>
-                      <div className='metric'><div className='muted'>Temp (°C)</div><div style={{fontSize:18}}>{(result.metrics.tempC==null)?'N/A':Number(result.metrics.tempC).toFixed(1)}</div></div>
-                      <div className='metric'><div className='muted'>Humidity (%)</div><div style={{fontSize:18}}>{(result.metrics.humidity==null)?'N/A':Number(result.metrics.humidity).toFixed(0)}</div></div>
-                      <div className='metric'><div className='muted'>Precip (mm)</div><div style={{fontSize:18}}>{(result.metrics.precipMM==null)?'N/A':Number(result.metrics.precipMM).toFixed(1)}</div></div>
-                      <div className='metric'><div className='muted'>Wind (km/h)</div><div style={{fontSize:18}}>{(result.metrics.windKmh==null)?'N/A':Number(result.metrics.windKmh).toFixed(1)}</div></div>
-                  </div>
-                )}
-                {result && result.source === 'nasa-power-predicted' && (
-                  <div style={{marginTop:10,padding:10,background:'#eef6ff',borderRadius:8}}>
-                    <strong>Predicted from NASA POWER history.</strong>
-                    <div className='muted' style={{marginTop:4}}>Values are averages computed from up to the previous 7 days of NASA POWER daily data.</div>
-                    {result.rawHistory && (
-                      <details style={{marginTop:6}}>
-                        <summary>Show raw NASA POWER history (7-day window)</summary>
-                        <pre style={{maxHeight:220,overflow:'auto'}}>{JSON.stringify(result.rawHistory,null,2)}</pre>
-                      </details>
-                    )}
-                  </div>
-                )}
+                ))}
+              </div>
+              <div style={{marginTop:10,textAlign:'right'}}>
+                <button className='btn-outline' onClick={()=>{ if (selectedPlace) { check(); } else { check(); } }}>Refresh</button>
               </div>
             </div>
-          )}
-
-          {chartData && (
-            <div className='chart-card'>
-              <div className='chart-legend'><div><strong>7-day temperature</strong></div><div className='muted'>Avg daily</div></div>
-              <Line data={chartData} options={{responsive:true, plugins:{legend:{display:false}}}} />
-            </div>
-          )}
-
-          {error && (<div style={{marginTop:12,color:'crimson'}}><strong>Error: </strong>{error}</div>)}
+          </div>
         </div>
       )}
 
       <div className='footer'>Built with NASA POWER & Open-Meteo — demo</div>
     </div>
   )
+}
+
+function SuggestionDropdown({anchorRef, places, onPick}){
+  const [rect, setRect] = useState(null);
+  useEffect(()=>{
+    function update(){
+      const el = anchorRef.current;
+      if (!el) return setRect(null);
+      const r = el.getBoundingClientRect();
+      setRect(r);
+    }
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return ()=>{ window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); }
+  }, [anchorRef]);
+
+  if (!rect) return null;
+
+  const style = {
+    position: 'fixed',
+    left: Math.max(8, rect.left),
+    top: rect.bottom + 8,
+    width: Math.min(rect.width, 900),
+    zIndex: 9999,
+    maxHeight: 340,
+    overflow: 'auto'
+  };
+
+  const node = (
+    <div className='place-list portal' style={style}>
+      {places.map(p=> (
+        <div key={p.place_id} className='place-item' onClick={()=>onPick(p)}>
+          <div style={{fontSize:14}}>{p.display_name}</div>
+          <div style={{fontSize:12,color:'#666'}}>lat: {p.lat}, lon: {p.lon}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  return ReactDOM.createPortal(node, document.body);
 }
 
