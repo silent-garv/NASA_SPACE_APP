@@ -1,0 +1,12 @@
+{
+  "name": "nasa-space-app",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "18.x"
+  },
+  "scripts": {
+    "build": "cd frontend ; npm ci && npm run build",
+    "start": "cd frontend ; npm run preview"
+  }
+}

@@ -7,4 +7,4 @@ Returns categorized weather labels (very_hot, very_cold, very_wet, very_windy, v
 
 Run locally:
 - npm install
-- npm start
+- npm  run start

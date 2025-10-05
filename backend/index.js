@@ -8,7 +8,28 @@ app.use(express.json());
 
 const PATH = require('path');
 const { classifyWeather } = require('./lib/weather');
-const PORT = process.env.PORT || 4000;
+const DEFAULT_PORT = Number(process.env.PORT || 4000);
+const FALLBACK_PORT = 5000;
+
+function choosePortAndListen(server){
+  const tryPort = (port) => new Promise((resolve, reject) => {
+    // server is the express app; app.listen returns an http.Server which emits events
+    try{
+      const s = server.listen(port, () => resolve(port));
+      s.once('error', (err) => reject(err));
+    }catch(err){
+      reject(err);
+    }
+  });
+
+  return tryPort(DEFAULT_PORT).catch((err) => {
+    if (err && err.code === 'EADDRINUSE'){
+      console.warn(`Port ${DEFAULT_PORT} in use, attempting fallback port ${FALLBACK_PORT}...`);
+      return tryPort(FALLBACK_PORT);
+    }
+    throw err;
+  });
+}
 
 // Serve static frontend (if present)
 const frontPath = PATH.join(__dirname, '..', 'frontend');
@@ -306,7 +327,21 @@ app.get('/api/forecast', async (req, res) =>{
   }
 });
 
-app.listen(PORT, ()=> {
-  console.log(`Server running on port ${PORT}`);
-  try{ require('fs').writeFileSync(__dirname + '/.server_started','ok'); }catch(e){}
-});
+const server = app;
+
+if (require.main === module){
+  // Only start listening when run directly (not when imported by tests)
+  choosePortAndListen(server).then((port) => {
+    console.log(`Server running on port ${port}`);
+    try{ require('fs').writeFileSync(__dirname + '/.server_started','ok'); }catch(e){}
+  }).catch((e) => {
+    if (e && e.code === 'EADDRINUSE'){
+      console.error(`Failed to start server: port ${DEFAULT_PORT} and fallback ${FALLBACK_PORT} are in use.`);
+    } else {
+      console.error('Server failed to start:', e && e.stack ? e.stack : e);
+    }
+    process.exit(1);
+  });
+}
+
+module.exports = app;
