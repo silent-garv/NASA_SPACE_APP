@@ -1,13 +1,11 @@
 {
   "version": 2,
-  "functions": {
-    "api/**/*.js": {
-      "runtime": "vercel-node@22.x"
-    }
-  },
+  "builds": [
+    { "src": "frontend/package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } },
+    { "src": "api/**/*.js", "use": "@vercel/node@4.0.0", "config": { "runtime": "nodejs22.x" } }
+  ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1.js" },
     { "src": "/(.*)", "dest": "/frontend/dist/index.html" }
-  ],
-  "framework": null
+  ]
 }
