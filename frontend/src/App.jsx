@@ -39,10 +39,10 @@ async function fetchOpenMeteo(lat, lon, date){
 }
 
 export default function App(){
-  const searchRef = useRef(null);
   // PWA install banner state
   const [installEvt, setInstallEvt] = useState(null);
-  const [showInstall, setShowInstall] = useState(false);
+  const [showInstall, setShowInstall] = useState(true); // always show on refresh
+  const searchRef = useRef(null);
   const [lat,setLat] = useState('28.6139');
   const [lon,setLon] = useState('77.2090');
   const [date,setDate] = useState(new Date().toISOString().slice(0,10));
@@ -80,18 +80,17 @@ export default function App(){
     const dismissed = localStorage.getItem('comfortcast:pwaDismissed') === '1';
     function onBIP(e){
       e.preventDefault();
-      if (!alreadyInstalled() && !dismissed){
-        setInstallEvt(e);
-        setShowInstall(true);
-      }
+      setInstallEvt(e);
+      setShowInstall(true);
     }
     window.addEventListener('beforeinstallprompt', onBIP);
     const onInstalled = ()=>{ setShowInstall(false); setInstallEvt(null); };
     window.addEventListener('appinstalled', onInstalled);
-    // show banner if ready and not dismissed (for browsers that don't fire BIP until engagement)
+    // Always show banner on refresh unless installed or dismissed
     if (!alreadyInstalled() && !dismissed){
-      // slight delay to avoid jank
-      setTimeout(()=>{ setShowInstall(s=> s || false); }, 1000);
+      setShowInstall(true);
+    } else {
+      setShowInstall(false);
     }
     return ()=>{
       window.removeEventListener('beforeinstallprompt', onBIP);
@@ -467,17 +466,10 @@ export default function App(){
     };
   }, [following]);
 
+  // Small PWA install button for consistent UI
+
   return (
-    <div className='container'>
-      {showInstall && (
-        <div className='install-banner glass' role='dialog' aria-live='polite' aria-label='Install app prompt'>
-          <div className='install-text'>Install ComfortCast for a faster, app-like experience?</div>
-          <div className='install-actions'>
-            <button className='btn-primary' onClick={triggerInstall}>Install</button>
-            <button className='btn-outline' onClick={dismissInstall}>Not now</button>
-          </div>
-        </div>
-      )}
+    <div className='container' style={{position:'relative'}}>
       <div className='navbar glass' role='navigation' aria-label='Main'>
         <div className='nav-title'>ComfortCast</div>
         <div className='searchbar'>
@@ -669,8 +661,18 @@ export default function App(){
                   </div>
                 ))}
               </div>
-              <div style={{marginTop:10,textAlign:'right'}}>
+              <div style={{marginTop:10,textAlign:'right',display:'flex',gap:8,justifyContent:'flex-end'}}>
                 <button className='btn-outline' onClick={()=>{ if (selectedPlace) { check(); } else { check(); } }}>Refresh</button>
+                {showInstall && (
+                  <button
+                    className='btn-outline'
+                    style={{fontWeight:'bold',fontSize:'15px',padding:'6px 14px'}}
+                    onClick={triggerInstall}
+                    title='Install this app'
+                  >
+                    ⬇ Download App
+                  </button>
+                )}
               </div>
             </details>
           </aside>
