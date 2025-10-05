@@ -77,12 +77,38 @@ button{cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;padding:8px 12p
  grid-template-columns:auto 1fr auto;
  align-items:center;
  gap:12px;
+  position: sticky;
+  top: 8px;
+  z-index: 1000;
+  box-shadow: 0 10px 30px rgba(15,23,42,0.08);
 }
 .nav-title{font-weight:800;color:#062a6f;letter-spacing:0.2px;white-space:nowrap;justify-self:start}
 .nav-links{display:flex;gap:12px;justify-self:end;align-items:center}
 .nav-links button{background:transparent;border:none;color:#0f62fe;padding:6px 8px}
 .nav-links button.active{background:rgba(15,98,254,0.1);color:var(--accent);border-radius:8px}
 .footer{margin-top:20px;padding:12px;text-align:center;color:var(--muted);font-size:13px}
+/* Unit toggle inside navbar */
+.unit-toggle{display:inline-flex;border:1px solid #e6eefc;border-radius:10px;overflow:hidden}
+.unit-toggle button{padding:6px 10px;color:var(--accent);background:transparent;border:none}
+.unit-toggle button.active{background:rgba(15,98,254,0.1);color:#0b57d0}
+
+/* Top PWA install banner */
+.install-banner{
+  position:fixed;
+  top:0;
+  left:0;
+  right:0;
+  margin:8px;
+  padding:10px 12px;
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  z-index:1100;
+}
+.install-text{font-weight:600}
+.install-actions{display:flex;gap:8px}
 
 /* Tabs */
 .tabs{display:flex;gap:8px;margin-top:12px}
@@ -92,6 +118,9 @@ button{cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;padding:8px 12p
 /* Chart */
 .chart-card{margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.35);-webkit-backdrop-filter: blur(14px);backdrop-filter: blur(14px)}
 .chart-legend{display:flex;justify-content:space-between;align-items:center}
+/* Chart responsive canvas wrapper */
+.chart-canvas{height:260px;margin-top:8px}
+.chart-canvas canvas{width:100% !important;height:100% !important}
 
 /* Layout grid for main content */
 .dashboard{
@@ -106,6 +135,11 @@ button{cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;padding:8px 12p
 .sidebar{
  padding:16px;
 }
+.mobile-accordion{overflow:hidden}
+.mobile-accordion > summary{list-style:none;cursor:pointer;padding:6px 0}
+.mobile-accordion > summary::-webkit-details-marker{display:none}
+.mobile-accordion[open]{animation:accordion-open 160ms ease-out}
+@keyframes accordion-open{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .sidebar .city-list{display:flex;flex-direction:column;gap:10px;max-height:460px;overflow:auto}
 .city-item{display:flex;align-items:center;justify-content:space-between;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.4);background:rgba(255,255,255,0.7);cursor:pointer}
 .city-item:hover{background:rgba(255,255,255,0.9)}
@@ -134,7 +168,9 @@ button{cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;padding:8px 12p
   .container{padding:16px}
   .dashboard{grid-template-columns:1fr}
   .navbar.glass{grid-template-columns:1fr;gap:8px}
+  .nav-links{justify-self:stretch;justify-content:space-between;flex-wrap:wrap}
   #map-root{height:220px}
+  .chart-canvas{height:240px}
 }
 
 /* Large phone / small tablet */
@@ -143,7 +179,10 @@ button{cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;padding:8px 12p
   .chart-card{padding:10px}
   .metrics{gap:12px}
   .toolbar-item input{min-width:100px}
+  .nav-links{gap:10px}
+  .nav-links button{padding:6px 6px}
   #map-root{height:200px}
+  .chart-canvas{height:210px}
 }
 
 /* Phones */
@@ -152,14 +191,25 @@ button{cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;padding:8px 12p
 	.row{flex-direction:column;align-items:stretch}
   .dashboard{grid-template-columns:1fr}
   .navbar.glass{grid-template-columns:1fr;gap:8px}
+  .toolbar{flex-direction:column;align-items:stretch}
+  .toolbar > div[style]{width:100%}
+  .toolbar .btn-primary, .toolbar .btn-outline{width:100%}
+  .toolbar-item{width:100%}
+  .toolbar-item input{width:100%}
+  .container{padding-top:12px}
 }
 
 /* Small phones */
 @media (max-width:480px){
   .container{margin:16px auto;padding:12px}
-  .nav-links{gap:8px}
+  .nav-links{gap:8px;flex-wrap:wrap}
   .searchbar input{height:40px}
   .toolbar{gap:8px}
   .toolbar-item input{min-width:92px}
+  .nav-title{font-size:18px}
+  button{padding:8px 10px}
+  .unit-toggle{border-radius:8px}
+  .unit-toggle button{padding:6px 8px}
   #map-root{height:180px}
+  .chart-canvas{height:180px}
 }

@@ -40,6 +40,9 @@ async function fetchOpenMeteo(lat, lon, date){
 
 export default function App(){
   const searchRef = useRef(null);
+  // PWA install banner state
+  const [installEvt, setInstallEvt] = useState(null);
+  const [showInstall, setShowInstall] = useState(false);
   const [lat,setLat] = useState('28.6139');
   const [lon,setLon] = useState('77.2090');
   const [date,setDate] = useState(new Date().toISOString().slice(0,10));
@@ -69,6 +72,50 @@ export default function App(){
 
   // Favorites stored in localStorage
   const [favs, setFavs] = useState([]);
+  useEffect(()=>{
+    // PWA install prompt capture
+    function alreadyInstalled(){
+      return window.matchMedia && window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    }
+    const dismissed = localStorage.getItem('comfortcast:pwaDismissed') === '1';
+    function onBIP(e){
+      e.preventDefault();
+      if (!alreadyInstalled() && !dismissed){
+        setInstallEvt(e);
+        setShowInstall(true);
+      }
+    }
+    window.addEventListener('beforeinstallprompt', onBIP);
+    const onInstalled = ()=>{ setShowInstall(false); setInstallEvt(null); };
+    window.addEventListener('appinstalled', onInstalled);
+    // show banner if ready and not dismissed (for browsers that don't fire BIP until engagement)
+    if (!alreadyInstalled() && !dismissed){
+      // slight delay to avoid jank
+      setTimeout(()=>{ setShowInstall(s=> s || false); }, 1000);
+    }
+    return ()=>{
+      window.removeEventListener('beforeinstallprompt', onBIP);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+
+  async function triggerInstall(){
+    if (!installEvt){ setShowInstall(false); return; }
+    try{
+      installEvt.prompt();
+      const choice = await installEvt.userChoice;
+      if (choice && choice.outcome !== 'accepted'){
+        // keep banner hidden for this session
+        setShowInstall(false);
+      }
+      setInstallEvt(null);
+    }catch(_){ setShowInstall(false); setInstallEvt(null); }
+  }
+
+  function dismissInstall(){
+    setShowInstall(false);
+    try{ localStorage.setItem('comfortcast:pwaDismissed','1'); }catch(_){ }
+  }
   useEffect(()=>{
     try{
       const s = localStorage.getItem('comfortcast:favs');
@@ -422,6 +469,15 @@ export default function App(){
 
   return (
     <div className='container'>
+      {showInstall && (
+        <div className='install-banner glass' role='dialog' aria-live='polite' aria-label='Install app prompt'>
+          <div className='install-text'>Install ComfortCast for a faster, app-like experience?</div>
+          <div className='install-actions'>
+            <button className='btn-primary' onClick={triggerInstall}>Install</button>
+            <button className='btn-outline' onClick={dismissInstall}>Not now</button>
+          </div>
+        </div>
+      )}
       <div className='navbar glass' role='navigation' aria-label='Main'>
         <div className='nav-title'>ComfortCast</div>
         <div className='searchbar'>
@@ -436,6 +492,9 @@ export default function App(){
             <button className={unit==='metric'?'active':''} onClick={()=>setUnit('metric')}>°C</button>
             <button className={unit==='imperial'?'active':''} onClick={()=>setUnit('imperial')}>°F</button>
           </div>
+          {installEvt && !showInstall && (
+            <button className='btn-outline' onClick={triggerInstall} title='Install this app'>Install App</button>
+          )}
           <button role='tab' aria-pressed={activeTab==='forecast'} onClick={()=>setActiveTab('forecast')} className={activeTab==='forecast'?'active':''}>Forecast</button>
           <button role='tab' aria-pressed={activeTab==='info'} onClick={()=>setActiveTab('info')} className={activeTab==='info'?'active':''}>Info</button>
         </div>
@@ -563,7 +622,9 @@ export default function App(){
               {chartData && (
                 <div className='chart-card'>
                   <div className='chart-legend'><div><strong>7-day temperature</strong></div><div className='muted'>Avg daily</div></div>
-                  <Line data={chartData} options={{responsive:true, plugins:{legend:{display:false}}}} />
+                  <div className='chart-canvas'>
+                    <Line data={chartData} options={{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}}} />
+                  </div>
                 </div>
               )}
 
@@ -571,13 +632,15 @@ export default function App(){
             </div>
           </div>
 
-          {/* Right: Sidebar with other cities */}
-          <div>
-            <div className='card glass sidebar'>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                <div><strong>Other Cities</strong></div>
-                <div className='muted' style={{fontSize:12}}>Quick select</div>
-              </div>
+          {/* Right: Sidebar with other cities (mobile collapsible) */}
+          <aside>
+            <details className='mobile-accordion card glass sidebar' open>
+              <summary>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                  <div><strong>Other Cities</strong></div>
+                  <div className='muted' style={{fontSize:12}}>Quick select</div>
+                </div>
+              </summary>
               {/* Favorites */}
               {favs.length>0 && (
                 <div style={{marginBottom:10}}>
@@ -609,8 +672,8 @@ export default function App(){
               <div style={{marginTop:10,textAlign:'right'}}>
                 <button className='btn-outline' onClick={()=>{ if (selectedPlace) { check(); } else { check(); } }}>Refresh</button>
               </div>
-            </div>
-          </div>
+            </details>
+          </aside>
         </div>
       )}
 
@@ -636,13 +699,20 @@ function SuggestionDropdown({anchorRef, places, onPick}){
 
   if (!rect) return null;
 
+  // Ensure dropdown fits within viewport on mobile
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
+  const maxWidth = Math.min(rect.width, vw - 16); // 8px margins on both sides
+  const left = Math.max(8, Math.min(rect.left, vw - maxWidth - 8));
+  const top = rect.bottom + 8;
+  const maxHeight = Math.max(160, Math.min(340, vh - top - 12));
   const style = {
     position: 'fixed',
-    left: Math.max(8, rect.left),
-    top: rect.bottom + 8,
-    width: Math.min(rect.width, 900),
+    left,
+    top,
+    width: maxWidth,
     zIndex: 9999,
-    maxHeight: 340,
+    maxHeight,
     overflow: 'auto'
   };
 
