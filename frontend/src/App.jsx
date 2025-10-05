@@ -99,16 +99,19 @@ export default function App(){
   }, []);
 
   async function triggerInstall(){
-    if (!installEvt){ setShowInstall(false); return; }
-    try{
-      installEvt.prompt();
-      const choice = await installEvt.userChoice;
-      if (choice && choice.outcome !== 'accepted'){
-        // keep banner hidden for this session
-        setShowInstall(false);
-      }
-      setInstallEvt(null);
-    }catch(_){ setShowInstall(false); setInstallEvt(null); }
+      if (!installEvt){ setShowInstall(false); return; }
+      try{
+        installEvt.prompt();
+        const choice = await installEvt.userChoice;
+        if (choice && choice.outcome === 'accepted'){
+          // App installed, hide button
+          setShowInstall(false);
+        } else {
+          // User cancelled, keep button visible
+          setShowInstall(true);
+        }
+        setInstallEvt(null);
+      }catch(_){ setShowInstall(true); setInstallEvt(null); }
   }
 
   function dismissInstall(){
