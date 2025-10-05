@@ -6,7 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
-    "build": "cd frontend ; npm ci && npm run build",
-    "start": "cd frontend ; npm run preview"
+    "build": "cd frontend && npm ci && npm run build",
+    "start": "cd frontend && npm run preview"
   }
 }
